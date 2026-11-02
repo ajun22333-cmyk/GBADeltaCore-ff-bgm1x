@@ -27,6 +27,7 @@ bool GBASoundDriver::init(long sampleRate)
 
 void GBASoundDriver::write(uint16_t *finalWave, int length)
 {
+    [GBAEmulatorBridge.sharedBridge mixBGMIntoBuffer:finalWave length:length];
     [GBAEmulatorBridge.sharedBridge.audioRenderer.audioBuffer writeBuffer:(uint8_t *)finalWave size:length];
 }
 

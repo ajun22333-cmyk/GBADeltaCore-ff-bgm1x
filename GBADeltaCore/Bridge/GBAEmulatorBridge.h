@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#include <stdint.h>
 
 @protocol DLTAEmulatorBridging;
 
@@ -21,6 +22,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 // When non-nil, Delta looks here for patches with same name as ROM.
 @property (nonatomic, copy, nullable) NSURL *patchesDirectoryURL;
+
+- (void)mixBGMIntoBuffer:(uint16_t *)buffer length:(int)length;
 
 @end
 

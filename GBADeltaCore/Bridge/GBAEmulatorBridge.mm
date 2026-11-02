@@ -16,6 +16,8 @@
 #include "gba/Sound.h"
 #include "gba/GBA.h"
 #include "gba/Globals.h"
+#include "BGM/rom.h"
+#include "BGM/bgm_mirror.h"
 #include "gba/Cheats.h"
 #include "gba/RTC.h"
 #include "gba/Sound.h"
@@ -23,6 +25,11 @@
 #include "Util.h"
 
 #include <sys/time.h>
+#include <memory>
+#include <vector>
+#include <cstdint>
+#include <algorithm>
+#include <cmath>
 
 // DeltaCore
 #import <GBADeltaCore/GBADeltaCore.h>
@@ -65,7 +72,54 @@ int  RGB_LOW_BITS_MASK;
 
 @end
 
+static std::unique_ptr<Rom> bgmRom;
+static std::unique_ptr<BgmMultiMirror> bgmMirror;
+static std::vector<MPlayTableCandidate> bgmCandidates;
+
+// VBA-M RAM adapter for the BGM mirror.
+class VBAMGbaBus final : public GbaBus {
+public:
+    uint8_t r8(uint32_t address) override {
+        if (address >= 0x02000000 && address < 0x02040000 && workRAM)
+            return workRAM[address - 0x02000000];
+        if (address >= 0x03000000 && address < 0x03008000 && internalRAM)
+            return internalRAM[address - 0x03000000];
+        return 0;
+    }
+
+    void w8(uint32_t address, uint8_t value) override {
+        if (address >= 0x02000000 && address < 0x02040000 && workRAM) {
+            workRAM[address - 0x02000000] = value;
+            return;
+        }
+        if (address >= 0x03000000 && address < 0x03008000 && internalRAM)
+            internalRAM[address - 0x03000000] = value;
+    }
+};
+
+static VBAMGbaBus bgmBus;
+
 @implementation GBAEmulatorBridge
+
+- (void)mixBGMIntoBuffer:(uint16_t *)buffer length:(int)length
+{
+    if (!buffer || length <= 0 || !bgmMirror) return;
+
+    const int frames = length / (sizeof(int16_t) * 2);
+    if (frames <= 0) return;
+
+    std::vector<float> mix((size_t)frames * 2);
+    bgmMirror->render(mix.data(), frames);
+
+    int16_t *dst = reinterpret_cast<int16_t *>(buffer);
+    const size_t count = (size_t)frames * 2;
+
+    for (size_t i = 0; i < count; ++i) {
+        const int32_t sample = (int32_t)dst[i] +
+            (int32_t)std::lrintf(mix[i] * 32767.0f);
+        dst[i] = (int16_t)std::clamp(sample, -32768, 32767);
+    }
+}
 @synthesize audioRenderer = _audioRenderer;
 @synthesize videoRenderer = _videoRenderer;
 @synthesize saveUpdateHandler = _saveUpdateHandler;
@@ -145,6 +199,14 @@ int  RGB_LOW_BITS_MASK;
         systemVerbose = 0;
     }
         
+    bgmMirror.reset();
+    bgmCandidates.clear();
+    bgmRom.reset();
+    bgmRom = std::make_unique<Rom>();
+    if (!bgmRom->loadFromMemory((const uint8_t *)romBytes, (size_t)romSize)) {
+        NSLog(@"BGM ROM copy failed");
+        bgmRom.reset();
+    }
     if (!CPULoadRomData((const char *)romBytes, romSize))
     {
         free(romBytes);
@@ -167,12 +229,26 @@ int  RGB_LOW_BITS_MASK;
     CPUInit(0, false);
     
     GBASystem.emuReset();
+
+    if (bgmRom) {
+        bgmCandidates = findMPlayTables(*bgmRom);
+        bgmMirror = std::make_unique<BgmMultiMirror>(bgmRom.get());
+        EngineConfig bgmConfig;
+        bgmConfig.outRate = 32768;
+        bgmMirror->configure(bgmConfig);
+        NSLog(@"BGM: found %lu MPlay table candidates",
+              (unsigned long)bgmCandidates.size());
+    }
     
     emulating = 1;
 }
 
 - (void)stop
 {
+    if (bgmMirror) {
+        bgmMirror->releaseMute(bgmBus);
+        bgmMirror->reset();
+    }
     GBASystem.emuCleanUp();
     soundShutdown();
     
@@ -200,6 +276,13 @@ int  RGB_LOW_BITS_MASK;
     while (![self isFrameReady])
     {
         GBASystem.emuMain(GBASystem.emuCount);
+    }
+
+    if (bgmMirror && !bgmMirror->located()) {
+        bgmMirror->locate(bgmBus, bgmCandidates);
+    }
+    if (bgmMirror && bgmMirror->located()) {
+        bgmMirror->onFrame(bgmBus, true);
     }
 }
 
