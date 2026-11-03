@@ -487,7 +487,6 @@ void BgmMultiMirror::onSeFrame(GbaBus& bus, Player& p, bool mute) {
 
 // 효과음 하나를 대체 중인 플레이어의 한 프레임 (효과음용·음악용 플레이어 공통)
 void BgmMultiMirror::seStep(GbaBus& bus, Player& p, const BgmSnapshot& s, bool mute) {
-    if (mute) muteBgmTracks(bus, p.info);
     // 게임이 소리를 새로 냈는지: 다른 소리이거나, 같은 소리를 다시 냄(MPlayStart 가 clock 을 0 으로 되돌림)
     const bool started = s.header != p.seHeader || s.clock < p.seClock;
     p.seHeader = s.header;
@@ -496,6 +495,8 @@ void BgmMultiMirror::seStep(GbaBus& bus, Player& p, const BgmSnapshot& s, bool m
     // 아주 빨리 거듭 내므로, 매번 처음부터 다시 틀면 소리가 나기도 전에 끊겨 들리지 않는다.
     // 게임에서 먼저 끝나거나 멈춰도 재생기는 끝까지 낸다
     if (started && (!p.eng->currentSong() || p.eng->finished())) p.eng->start(s.header);
+    // 대체 엔진이 유효한 소리를 시작한 뒤에만 원래 게임 채널을 음소거한다.
+    if (mute && p.eng->currentSong() && !p.eng->finished()) muteBgmTracks(bus, p.info);
 }
 
 // 게임에서는 이미 끝났거나 지나갔는데, 재생기는 아직 1배속으로 내고 있는 팡파레
@@ -577,13 +578,15 @@ void BgmMultiMirror::onFrame(GbaBus& bus, bool mute) {
         }
         if (!p.music) continue;
         if (p.kind == Kind_Jingle && !(s.status & STATUS_TRACK)) p.gameDone = true;  // 게임에서는 끝남
-        if (mute) muteBgmTracks(bus, p.info);
         // 멈춰 있던 곡을 게임이 다시 이어 갈 때, 게임에서는 지나간 팡파레가 아직 나오고 있으면
         // 팡파레가 1배속으로 끝날 때까지 기다린다
         if (p.kind == Kind_Music && p.eng->paused() && !(s.status & STATUS_PAUSE) && anyJingleLagging(&p)) {
             continue;
         }
         p.mirror->update(s);
+        // 대체 엔진이 유효한 곡을 시작한 뒤에만 원래 게임 BGM 채널을 음소거한다.
+        // 곡 헤더가 잘못됐거나 재생기가 곡을 거부하면 원래 게임 음악을 그대로 들려준다.
+        if (mute && p.eng->currentSong() && !p.eng->finished()) muteBgmTracks(bus, p.info);
     }
     cutscene_ = cutscene;
 }
