@@ -142,7 +142,7 @@ static void StartBGMRenderTimer(void)
         if (frames <= 0) return;
 
         GBAEmulatorBridge *bridge = GBAEmulatorBridge.sharedBridge;
-        RingBuffer *output = bridge.audioRenderer.bgmAudioBuffer;
+        id output = bridge.audioRenderer.bgmAudioBuffer;
         if (!output || !output.isEnabled) return;
 
         const size_t sampleCount = (size_t)frames * 2u;
