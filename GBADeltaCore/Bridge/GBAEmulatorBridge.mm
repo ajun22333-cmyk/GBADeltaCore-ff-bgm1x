@@ -355,7 +355,7 @@ static void StartBGMRenderTimer(void)
         bgmMirror->locate(bgmBus, bgmCandidates);
     }
     if (bgmMirror && bgmMirror->located()) {
-        bgmMirror->onFrame(bgmBus, true);
+        bgmMirror->onFrame(bgmBus, false); // Diagnostic: disable game-RAM BGM muting
     }
 }
 
