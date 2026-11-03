@@ -99,6 +99,71 @@ public:
 
 static VBAMGbaBus bgmBus;
 
+static dispatch_queue_t bgmRenderQueue;
+static dispatch_source_t bgmRenderTimer;
+static uint32_t bgmRenderFrameRemainder = 0;
+
+static void StopBGMRenderTimer(void)
+{
+    if (bgmRenderTimer) {
+        dispatch_source_cancel(bgmRenderTimer);
+        bgmRenderTimer = nil;
+        if (bgmRenderQueue) {
+            dispatch_sync(bgmRenderQueue, ^{});
+        }
+    }
+    bgmRenderFrameRemainder = 0;
+}
+
+static void StartBGMRenderTimer(void)
+{
+    StopBGMRenderTimer();
+
+    if (!bgmRenderQueue) {
+        bgmRenderQueue = dispatch_queue_create("com.ajun22333.Delta.GBA.BGMRender", DISPATCH_QUEUE_SERIAL);
+    }
+
+    bgmRenderTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, bgmRenderQueue);
+    if (!bgmRenderTimer) return;
+
+    // Generate 32768 Hz stereo PCM independently of the emulator frame rate.
+    // 10 ms produces alternating 327/328-frame blocks, keeping BGM at 1x
+    // even while the game emulation is fast-forwarding.
+    dispatch_source_set_timer(bgmRenderTimer,
+                             dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_MSEC),
+                             10 * NSEC_PER_MSEC,
+                             1 * NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(bgmRenderTimer, ^{
+        if (!emulating || !bgmMirror || !bgmMirror->located()) return;
+
+        bgmRenderFrameRemainder += 32768u * 10u;
+        const int frames = (int)(bgmRenderFrameRemainder / 1000u);
+        bgmRenderFrameRemainder %= 1000u;
+        if (frames <= 0) return;
+
+        GBAEmulatorBridge *bridge = GBAEmulatorBridge.sharedBridge;
+        RingBuffer *output = bridge.audioRenderer.bgmAudioBuffer;
+        if (!output || !output.isEnabled) return;
+
+        const size_t sampleCount = (size_t)frames * 2u;
+        const size_t byteCount = sampleCount * sizeof(int16_t);
+        if (output.availableBytesForWriting < (NSInteger)byteCount) return;
+
+        std::vector<float> rendered(sampleCount);
+        bgmMirror->render(rendered.data(), frames);
+
+        std::vector<int16_t> pcm(sampleCount);
+        for (size_t i = 0; i < sampleCount; ++i) {
+            const float value = std::max(-1.0f, std::min(1.0f, rendered[i]));
+            pcm[i] = (int16_t)std::lrintf(value * 32767.0f);
+        }
+
+        [output writeBuffer:(uint8_t *)pcm.data() size:(NSInteger)byteCount];
+    });
+
+    dispatch_resume(bgmRenderTimer);
+}
+
 @implementation GBAEmulatorBridge
 
 - (void)mixBGMIntoBuffer:(uint16_t *)buffer length:(int)length
@@ -150,6 +215,7 @@ static VBAMGbaBus bgmBus;
 
 - (void)startWithGameURL:(NSURL *)gameURL
 {
+    StopBGMRenderTimer();
     self.gameURL = gameURL;
     
     NSError *error = nil;
@@ -240,11 +306,16 @@ static VBAMGbaBus bgmBus;
               (unsigned long)bgmCandidates.size());
     }
     
+    [self.audioRenderer.bgmAudioBuffer reset];
     emulating = 1;
+    StartBGMRenderTimer();
 }
 
 - (void)stop
 {
+    emulating = 0;
+    StopBGMRenderTimer();
+    [self.audioRenderer.bgmAudioBuffer reset];
     if (bgmMirror) {
         bgmMirror->releaseMute(bgmBus);
         bgmMirror->reset();
@@ -260,12 +331,14 @@ static VBAMGbaBus bgmBus;
 - (void)pause
 {
     emulating = 0;
+    [self.audioRenderer.bgmAudioBuffer reset];
     
     [self deactivateGyroscope];
 }
 
 - (void)resume
 {
+    [self.audioRenderer.bgmAudioBuffer reset];
     emulating = 1;
 }
 
