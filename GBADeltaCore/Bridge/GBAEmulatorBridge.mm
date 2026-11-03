@@ -296,19 +296,9 @@ static void StartBGMRenderTimer(void)
     
     GBASystem.emuReset();
 
-    if (bgmRom) {
-        bgmCandidates = findMPlayTables(*bgmRom);
-        bgmMirror = std::make_unique<BgmMultiMirror>(bgmRom.get());
-        EngineConfig bgmConfig;
-        bgmConfig.outRate = 32768;
-        bgmMirror->configure(bgmConfig);
-        NSLog(@"BGM: found %lu MPlay table candidates",
-              (unsigned long)bgmCandidates.size());
-    }
     
     [self.audioRenderer.bgmAudioBuffer reset];
     emulating = 1;
-    StartBGMRenderTimer();
 }
 
 - (void)stop
@@ -316,10 +306,9 @@ static void StartBGMRenderTimer(void)
     emulating = 0;
     StopBGMRenderTimer();
     [self.audioRenderer.bgmAudioBuffer reset];
-    if (bgmMirror) {
-        bgmMirror->releaseMute(bgmBus);
-        bgmMirror->reset();
-    }
+    bgmMirror.reset();
+    bgmRom.reset();
+    bgmCandidates.clear();
     GBASystem.emuCleanUp();
     soundShutdown();
     
@@ -351,12 +340,6 @@ static void StartBGMRenderTimer(void)
         GBASystem.emuMain(GBASystem.emuCount);
     }
 
-    if (bgmMirror && !bgmMirror->located()) {
-        bgmMirror->locate(bgmBus, bgmCandidates);
-    }
-    if (bgmMirror && bgmMirror->located()) {
-        bgmMirror->onFrame(bgmBus, false); // Diagnostic: disable game-RAM BGM muting
-    }
 }
 
 - (nullable NSData *)readMemoryAtAddress:(NSInteger)address size:(NSInteger)size
