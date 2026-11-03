@@ -142,12 +142,12 @@ static void StartBGMRenderTimer(void)
         if (frames <= 0) return;
 
         GBAEmulatorBridge *bridge = GBAEmulatorBridge.sharedBridge;
-        DLTARingBuffer *output = (DLTARingBuffer *)bridge.audioRenderer.bgmAudioBuffer;
-        if (!output || !output.isEnabled) return;
+        id output = bridge.audioRenderer.bgmAudioBuffer;
+        if (!output || ![[output valueForKey:@"isEnabled"] boolValue]) return;
 
         const size_t sampleCount = (size_t)frames * 2u;
         const size_t byteCount = sampleCount * sizeof(int16_t);
-        if (output.availableBytesForWriting < (NSInteger)byteCount) return;
+        if ([[output valueForKey:@"availableBytesForWriting"] integerValue] < (NSInteger)byteCount) return;
 
         std::vector<float> rendered(sampleCount);
         bgmMirror->render(rendered.data(), frames);
